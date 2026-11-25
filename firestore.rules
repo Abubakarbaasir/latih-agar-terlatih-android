@@ -1,0 +1,381 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL HELPERS ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isBootstrappedSuperAdmin() {
+      return isSignedIn() &&
+        ('email' in request.auth.token) &&
+        ('email_verified' in request.auth.token) &&
+        request.auth.token.email == 'abubakarbaasir8@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    function adminDocExists() {
+      return exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function adminDoc() {
+      return get(/databases/$(database)/documents/admins/$(request.auth.uid)).data;
+    }
+
+    function isSuperAdmin() {
+      return isBootstrappedSuperAdmin() ||
+        (isSignedIn() && adminDocExists() && adminDoc().active == true && adminDoc().role == 'super_admin');
+    }
+
+    function hasAdminRole() {
+      return isBootstrappedSuperAdmin() ||
+        (isSignedIn() && adminDocExists() && adminDoc().active == true &&
+          adminDoc().role in ['super_admin', 'question_manager', 'reviewer']);
+    }
+
+    function hasPermission(perm) {
+      return isSuperAdmin() ||
+        (isSignedIn() && adminDocExists() && adminDoc().active == true && perm in adminDoc().permissions);
+    }
+
+    function canUpdateQuestion(inc, ex) {
+      let superAdmin = isSuperAdmin();
+      let perms = (!superAdmin && adminDocExists() && adminDoc().active == true) ? adminDoc().permissions : [];
+      let baseProtected = inc.publishedVersionNumber == ex.publishedVersionNumber &&
+        (!('publishedVersionData' in inc) || (('publishedVersionData' in ex) && inc.publishedVersionData == ex.publishedVersionData));
+      return (superAdmin &&
+          inc.diff(ex).affectedKeys().hasOnly(['categoryId', 'categoryCode', 'categoryName', 'title', 'instruction', 'difficulty', 'status', 'currentVersionNumber', 'publishedVersionNumber', 'latestVersionData', 'publishedVersionData', 'lastReviewNote', 'reviewedBy', 'updatedAt'])) ||
+        (perms.hasAny(['edit_question', 'create_question']) &&
+          inc.status in ['draft', 'review'] &&
+          ex.status in ['draft', 'needs_repair', 'approved', 'published'] &&
+          baseProtected &&
+          inc.diff(ex).affectedKeys().hasOnly(['categoryId', 'categoryCode', 'categoryName', 'title', 'instruction', 'difficulty', 'status', 'currentVersionNumber', 'latestVersionData', 'updatedAt'])) ||
+        (perms.hasAny(['review_question', 'approve_question', 'reject_question']) &&
+          ex.status == 'review' &&
+          inc.status in ['approved', 'needs_repair', 'rejected'] &&
+          baseProtected &&
+          inc.diff(ex).affectedKeys().hasOnly(['status', 'lastReviewNote', 'reviewedBy', 'updatedAt'])) ||
+        (perms.hasAny(['publish_question']) &&
+          ex.status in ['approved', 'disabled'] &&
+          inc.status == 'published' &&
+          inc.diff(ex).affectedKeys().hasOnly(['status', 'publishedVersionNumber', 'publishedVersionData', 'updatedAt'])) ||
+        (perms.hasAny(['disable_question']) &&
+          ex.status == 'published' &&
+          inc.status == 'disabled' &&
+          inc.diff(ex).affectedKeys().hasOnly(['status', 'updatedAt']));
+    }
+
+    // --- VALIDATION BLUEPRINTS ---
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+        data.role in ['player', 'reviewer', 'question_manager', 'super_admin'] &&
+        data.permissions is list && data.permissions.size() <= 20 &&
+        (data.permissions.size() == 0 || data.permissions[0] is string) &&
+        data.active is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAdminRecord(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+        data.role in ['super_admin', 'question_manager', 'reviewer'] &&
+        data.permissions is list && data.permissions.size() <= 20 &&
+        (data.permissions.size() == 0 || data.permissions[0] is string) &&
+        data.active is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCategory(data) {
+      return data.code is string && data.code.size() >= 2 && data.code.size() <= 16 &&
+        data.code.matches('^[A-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 100 &&
+        data.description is string && data.description.size() <= 500 &&
+        data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 10000 &&
+        data.active is bool &&
+        data.questionCounter is int && data.questionCounter >= 0 && data.questionCounter <= 1000000 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidQuestion(data) {
+      return data.code is string && data.code.size() >= 5 && data.code.size() <= 40 &&
+        data.categoryId is string && data.categoryId.size() >= 1 && data.categoryId.size() <= 128 &&
+        data.categoryCode is string && data.categoryCode.size() >= 2 && data.categoryCode.size() <= 16 &&
+        data.categoryName is string && data.categoryName.size() >= 2 && data.categoryName.size() <= 100 &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 200 &&
+        data.instruction is string && data.instruction.size() >= 2 && data.instruction.size() <= 500 &&
+        data.difficulty in ['beginner', 'intermediate', 'advanced'] &&
+        data.source in ['manual', 'ai', 'excel'] &&
+        data.status in ['draft', 'review', 'needs_repair', 'approved', 'published', 'disabled', 'rejected'] &&
+        data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+        data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 120 &&
+        data.currentVersionNumber is int && data.currentVersionNumber >= 1 &&
+        data.publishedVersionNumber is int && data.publishedVersionNumber >= 0 &&
+        data.latestVersionData is map &&
+        data.latestVersionData.baseTokens is list && data.latestVersionData.baseTokens.size() == 10 &&
+        data.latestVersionData.answerPatterns is list && data.latestVersionData.answerPatterns.size() >= 1 &&
+        (!('publishedVersionData' in data) || (
+          data.publishedVersionData is map &&
+          data.publishedVersionData.baseTokens is list &&
+          data.publishedVersionData.baseTokens.size() == 10 &&
+          data.publishedVersionData.answerPatterns is list &&
+          data.publishedVersionData.answerPatterns.size() >= 1
+        )) &&
+        (!('lastReviewNote' in data) || (data.lastReviewNote is string && data.lastReviewNote.size() <= 1000)) &&
+        (!('reviewedBy' in data) || (data.reviewedBy is string && data.reviewedBy.size() <= 120)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSession(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.categoryId is string && data.categoryId.size() >= 1 && data.categoryId.size() <= 128 &&
+        data.categoryName is string && data.categoryName.size() >= 1 && data.categoryName.size() <= 100 &&
+        data.status in ['active', 'ended'] &&
+        data.elapsedSeconds is int && data.elapsedSeconds >= 0 && data.elapsedSeconds <= 864000 &&
+        data.currentDifficulty in ['beginner', 'intermediate', 'advanced'] &&
+        data.questionsAnswered is int && data.questionsAnswered >= 0 && data.questionsAnswered <= 10000 &&
+        data.correctCount is int && data.correctCount >= 0 && data.correctCount <= 10000 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAnswer(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.sessionId is string && data.sessionId.size() >= 1 && data.sessionId.size() <= 128 &&
+        data.questionId is string && data.questionId.size() >= 1 && data.questionId.size() <= 128 &&
+        data.questionCode is string && data.questionCode.size() >= 1 && data.questionCode.size() <= 40 &&
+        data.versionNumber is int && data.versionNumber >= 1 &&
+        data.matchedPatternId is string && data.matchedPatternId.size() <= 64 &&
+        data.evaluationStatus in ['CORRECT', 'WRONG', 'INCOMPLETE'] &&
+        data.score is int && data.score >= 0 && data.score <= 100 &&
+        data.correctWordCount is int && data.correctWordCount >= 0 && data.correctWordCount <= 10 &&
+        data.wrongWordCount is int && data.wrongWordCount >= 0 && data.wrongWordCount <= 10 &&
+        data.incompleteWordCount is int && data.incompleteWordCount >= 0 && data.incompleteWordCount <= 10 &&
+        data.playerTokensSummary is list && data.playerTokensSummary.size() == 10 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // --- COLLECTIONS ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isSuperAdmin());
+      allow list: if isSignedIn() && isSuperAdmin();
+
+      allow create: if isSignedIn() && isValidId(userId) &&
+        isOwner(userId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'displayName', 'email', 'role', 'permissions', 'active', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'displayName', 'email', 'role', 'permissions', 'active', 'createdAt', 'updatedAt']) &&
+        isValidUserProfile(incoming()) &&
+        ((incoming().role == 'player' && incoming().permissions.size() == 0 && incoming().active == true) || isBootstrappedSuperAdmin());
+
+      allow update: if isSignedIn() && isValidId(userId) &&
+        isValidUserProfile(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt && (
+          isSuperAdmin() ||
+          (isOwner(userId) &&
+            incoming().role == existing().role &&
+            incoming().permissions == existing().permissions &&
+            incoming().active == existing().active &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'updatedAt']))
+        );
+
+      allow delete: if false;
+
+      match /sessions/{sessionId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(sessionId) && isOwner(userId);
+        allow list: if isSignedIn() && isValidId(userId) && isOwner(userId);
+
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(sessionId) &&
+          isOwner(userId) &&
+          incoming().userId == request.auth.uid &&
+          incoming().keys().hasAll(['userId', 'categoryId', 'categoryName', 'status', 'elapsedSeconds', 'currentDifficulty', 'questionsAnswered', 'correctCount', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'categoryId', 'categoryName', 'status', 'elapsedSeconds', 'currentDifficulty', 'questionsAnswered', 'correctCount', 'createdAt', 'updatedAt']) &&
+          isValidSession(incoming());
+
+        allow update: if isSignedIn() && isValidId(userId) && isValidId(sessionId) &&
+          isOwner(userId) &&
+          isValidSession(incoming()) &&
+          incoming().userId == existing().userId &&
+          incoming().categoryId == existing().categoryId &&
+          incoming().createdAt == existing().createdAt &&
+          existing().status != 'ended' &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'elapsedSeconds', 'currentDifficulty', 'questionsAnswered', 'correctCount', 'updatedAt']);
+
+        allow delete: if false;
+
+        match /answers/{answerId} {
+          allow get: if isSignedIn() && isValidId(userId) && isValidId(sessionId) && isValidId(answerId) && isOwner(userId);
+          allow list: if isSignedIn() && isValidId(userId) && isValidId(sessionId) && isOwner(userId);
+
+          allow create: if isSignedIn() && isValidId(userId) && isValidId(sessionId) && isValidId(answerId) &&
+            isOwner(userId) &&
+            incoming().userId == request.auth.uid &&
+            incoming().sessionId == sessionId &&
+            incoming().keys().hasAll(['userId', 'sessionId', 'questionId', 'questionCode', 'versionNumber', 'matchedPatternId', 'evaluationStatus', 'score', 'correctWordCount', 'wrongWordCount', 'incompleteWordCount', 'playerTokensSummary', 'createdAt']) &&
+            incoming().keys().hasOnly(['userId', 'sessionId', 'questionId', 'questionCode', 'versionNumber', 'matchedPatternId', 'evaluationStatus', 'score', 'correctWordCount', 'wrongWordCount', 'incompleteWordCount', 'playerTokensSummary', 'createdAt']) &&
+            isValidAnswer(incoming());
+
+          allow update, delete: if false;
+        }
+      }
+    }
+
+    match /admins/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isSuperAdmin());
+      allow list: if isSignedIn() && isSuperAdmin();
+
+      allow create: if isSignedIn() && isValidId(userId) &&
+        isSuperAdmin() &&
+        incoming().userId == userId &&
+        incoming().keys().hasAll(['userId', 'displayName', 'email', 'role', 'permissions', 'active', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'displayName', 'email', 'role', 'permissions', 'active', 'createdAt', 'updatedAt']) &&
+        isValidAdminRecord(incoming());
+
+      allow update: if isSignedIn() && isValidId(userId) &&
+        isSuperAdmin() &&
+        isValidAdminRecord(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'role', 'permissions', 'active', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(userId) && isSuperAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow get: if isSignedIn() && isValidId(categoryId) && (existing().active == true || hasAdminRole());
+      allow list: if isSignedIn() && (existing().active == true || hasAdminRole());
+
+      allow create: if isSignedIn() && isValidId(categoryId) &&
+        (isSuperAdmin() || hasPermission('manage_categories')) &&
+        incoming().keys().hasAll(['code', 'name', 'description', 'sortOrder', 'active', 'questionCounter', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['code', 'name', 'description', 'sortOrder', 'active', 'questionCounter', 'createdAt', 'updatedAt']) &&
+        isValidCategory(incoming());
+
+      allow update: if isSignedIn() && isValidId(categoryId) &&
+        isValidCategory(incoming()) &&
+        incoming().createdAt == existing().createdAt && (
+          ((isSuperAdmin() || hasPermission('manage_categories')) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['code', 'name', 'description', 'sortOrder', 'active', 'questionCounter', 'updatedAt'])) ||
+          ((isSuperAdmin() || hasPermission('create_question')) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['questionCounter', 'updatedAt']))
+        );
+
+      allow delete: if isSignedIn() && isValidId(categoryId) && isSuperAdmin();
+    }
+
+    match /questions/{questionId} {
+      allow get: if isSignedIn() && isValidId(questionId) && (existing().status == 'published' || hasAdminRole());
+      allow list: if isSignedIn() && (existing().status == 'published' || hasAdminRole());
+
+      allow create: if isSignedIn() && isValidId(questionId) &&
+        (isSuperAdmin() || hasPermission('create_question')) &&
+        isValidQuestion(incoming()) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().status == 'draft' &&
+        incoming().publishedVersionNumber == 0 &&
+        !('publishedVersionData' in incoming()) &&
+        incoming().keys().hasAll(['code', 'categoryId', 'categoryCode', 'categoryName', 'title', 'instruction', 'difficulty', 'source', 'status', 'createdBy', 'createdByName', 'currentVersionNumber', 'publishedVersionNumber', 'latestVersionData', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['code', 'categoryId', 'categoryCode', 'categoryName', 'title', 'instruction', 'difficulty', 'source', 'status', 'createdBy', 'createdByName', 'currentVersionNumber', 'publishedVersionNumber', 'latestVersionData', 'lastReviewNote', 'reviewedBy', 'createdAt', 'updatedAt']) &&
+        exists(/databases/$(database)/documents/categories/$(incoming().categoryId));
+
+      allow update: if isSignedIn() && isValidId(questionId) &&
+        isValidQuestion(incoming()) &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().code == existing().code &&
+        canUpdateQuestion(incoming(), existing());
+
+      allow delete: if isSignedIn() && isValidId(questionId) && isSuperAdmin();
+
+      match /versions/{versionId} {
+        allow get, list: if isSignedIn() && isValidId(questionId) && hasAdminRole();
+        allow create: if isSignedIn() && isValidId(questionId) && isValidId(versionId) &&
+          (isSuperAdmin() || hasPermission('create_question') || hasPermission('edit_question')) &&
+          incoming().createdBy == request.auth.uid &&
+          incoming().keys().hasAll(['versionNumber', 'createdBy', 'createdByName', 'changeSummary', 'versionData', 'createdAt']) &&
+          incoming().keys().hasOnly(['versionNumber', 'createdBy', 'createdByName', 'changeSummary', 'versionData', 'createdAt']) &&
+          incoming().versionNumber is int && incoming().versionNumber >= 1 &&
+          incoming().createdByName is string && incoming().createdByName.size() >= 1 && incoming().createdByName.size() <= 120 &&
+          incoming().changeSummary is string && incoming().changeSummary.size() <= 500 &&
+          incoming().versionData is map &&
+          incoming().createdAt is timestamp && incoming().createdAt <= request.time;
+        allow update, delete: if false;
+      }
+
+      match /reviews/{reviewId} {
+        allow get, list: if isSignedIn() && isValidId(questionId) && hasAdminRole();
+        allow create: if isSignedIn() && isValidId(questionId) && isValidId(reviewId) &&
+          (isSuperAdmin() || hasPermission('submit_review') || hasPermission('review_question') || hasPermission('approve_question') || hasPermission('reject_question') || hasPermission('publish_question') || hasPermission('disable_question')) &&
+          incoming().reviewerUid == request.auth.uid &&
+          incoming().keys().hasAll(['reviewerUid', 'reviewerName', 'decision', 'notes', 'versionNumber', 'createdAt']) &&
+          incoming().keys().hasOnly(['reviewerUid', 'reviewerName', 'decision', 'notes', 'versionNumber', 'createdAt']) &&
+          incoming().reviewerName is string && incoming().reviewerName.size() >= 1 && incoming().reviewerName.size() <= 120 &&
+          incoming().decision in ['submitted', 'approved', 'needs_repair', 'rejected', 'published', 'disabled'] &&
+          incoming().notes is string && incoming().notes.size() <= 1000 &&
+          incoming().versionNumber is int && incoming().versionNumber >= 1 &&
+          incoming().createdAt is timestamp && incoming().createdAt <= request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    match /admin_logs/{logId} {
+      allow get, list: if isSignedIn() && (isSuperAdmin() || hasPermission('view_logs'));
+      allow create: if isSignedIn() && isValidId(logId) &&
+        hasAdminRole() &&
+        incoming().actorUid == request.auth.uid &&
+        incoming().keys().hasAll(['actorUid', 'actorName', 'action', 'targetType', 'targetId', 'summary', 'createdAt']) &&
+        incoming().keys().hasOnly(['actorUid', 'actorName', 'action', 'targetType', 'targetId', 'summary', 'createdAt']) &&
+        incoming().actorName is string && incoming().actorName.size() >= 1 && incoming().actorName.size() <= 120 &&
+        incoming().action is string && incoming().action.size() >= 1 && incoming().action.size() <= 80 &&
+        incoming().targetType is string && incoming().targetType.size() >= 1 && incoming().targetType.size() <= 60 &&
+        incoming().targetId is string && incoming().targetId.size() >= 1 && incoming().targetId.size() <= 128 &&
+        incoming().summary is string && incoming().summary.size() >= 1 && incoming().summary.size() <= 500 &&
+        incoming().createdAt is timestamp && incoming().createdAt <= request.time;
+      allow update, delete: if false;
+    }
+
+    match /app_config/{configId} {
+      allow get: if isSignedIn() && isValidId(configId);
+      allow list: if false;
+      allow create, update: if isSignedIn() && isValidId(configId) &&
+        isSuperAdmin() &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().keys().hasAll(['beginnerMaxSeconds', 'intermediateMaxSeconds', 'updatedBy', 'updatedAt']) &&
+        incoming().keys().hasOnly(['beginnerMaxSeconds', 'intermediateMaxSeconds', 'updatedBy', 'updatedAt']) &&
+        incoming().beginnerMaxSeconds is int && incoming().beginnerMaxSeconds >= 30 && incoming().beginnerMaxSeconds <= 3600 &&
+        incoming().intermediateMaxSeconds is int && incoming().intermediateMaxSeconds > incoming().beginnerMaxSeconds && incoming().intermediateMaxSeconds <= 7200 &&
+        incoming().updatedAt is timestamp && incoming().updatedAt <= request.time;
+      allow delete: if false;
+    }
+  }
+}

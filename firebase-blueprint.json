@@ -1,0 +1,215 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile with role and granular permissions.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["player", "reviewer", "question_manager", "super_admin"] },
+        "permissions": { "type": "array" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": ["userId", "displayName", "email", "role", "permissions", "active", "createdAt", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted admin role and granular permissions registry.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["super_admin", "question_manager", "reviewer"] },
+        "permissions": { "type": "array" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "displayName", "email", "role", "permissions", "active", "createdAt", "updatedAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Nahwu learning category with ordering, status, and question code sequence counter.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "sortOrder": { "type": "integer" },
+        "active": { "type": "boolean" },
+        "questionCounter": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "name", "description", "sortOrder", "active", "questionCounter", "createdAt", "updatedAt"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "Nahwu question containing 10 tokens, accepted answer patterns, and separate published/latest version payloads.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "categoryCode": { "type": "string" },
+        "categoryName": { "type": "string" },
+        "title": { "type": "string" },
+        "instruction": { "type": "string" },
+        "difficulty": { "type": "string", "enum": ["beginner", "intermediate", "advanced"] },
+        "source": { "type": "string", "enum": ["manual", "ai", "excel"] },
+        "status": { "type": "string", "enum": ["draft", "review", "needs_repair", "approved", "published", "disabled", "rejected"] },
+        "createdBy": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "currentVersionNumber": { "type": "integer" },
+        "publishedVersionNumber": { "type": "integer" },
+        "latestVersionData": { "type": "object" },
+        "publishedVersionData": { "type": "object" },
+        "lastReviewNote": { "type": "string" },
+        "reviewedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "categoryId", "categoryCode", "categoryName", "title", "instruction", "difficulty", "source", "status", "createdBy", "createdByName", "currentVersionNumber", "publishedVersionNumber", "latestVersionData", "createdAt", "updatedAt"]
+    },
+    "QuestionVersion": {
+      "title": "QuestionVersion",
+      "description": "Immutable historical version snapshot of a question.",
+      "type": "object",
+      "properties": {
+        "versionNumber": { "type": "integer" },
+        "createdBy": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "changeSummary": { "type": "string" },
+        "versionData": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["versionNumber", "createdBy", "createdByName", "changeSummary", "versionData", "createdAt"]
+    },
+    "QuestionReview": {
+      "title": "QuestionReview",
+      "description": "Audit log of review decisions and repair notes.",
+      "type": "object",
+      "properties": {
+        "reviewerUid": { "type": "string" },
+        "reviewerName": { "type": "string" },
+        "decision": { "type": "string", "enum": ["submitted", "approved", "needs_repair", "rejected", "published", "disabled"] },
+        "notes": { "type": "string" },
+        "versionNumber": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["reviewerUid", "reviewerName", "decision", "notes", "versionNumber", "createdAt"]
+    },
+    "AdminLog": {
+      "title": "AdminLog",
+      "description": "Administrative activity log entry.",
+      "type": "object",
+      "properties": {
+        "actorUid": { "type": "string" },
+        "actorName": { "type": "string" },
+        "action": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "summary": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorUid", "actorName", "action", "targetType", "targetId", "summary", "createdAt"]
+    },
+    "DifficultyConfig": {
+      "title": "DifficultyConfig",
+      "description": "Configurable time thresholds for single-player difficulty progression.",
+      "type": "object",
+      "properties": {
+        "beginnerMaxSeconds": { "type": "integer" },
+        "intermediateMaxSeconds": { "type": "integer" },
+        "updatedBy": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["beginnerMaxSeconds", "intermediateMaxSeconds", "updatedBy", "updatedAt"]
+    },
+    "PlayerSession": {
+      "title": "PlayerSession",
+      "description": "Single-category player practice session tracking time-based difficulty progression.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "categoryName": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "ended"] },
+        "elapsedSeconds": { "type": "integer" },
+        "currentDifficulty": { "type": "string", "enum": ["beginner", "intermediate", "advanced"] },
+        "questionsAnswered": { "type": "integer" },
+        "correctCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "categoryId", "categoryName", "status", "elapsedSeconds", "currentDifficulty", "questionsAnswered", "correctCount", "createdAt", "updatedAt"]
+    },
+    "PlayerAnswer": {
+      "title": "PlayerAnswer",
+      "description": "Submitted player answer and deterministic evaluation breakdown.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "questionId": { "type": "string" },
+        "questionCode": { "type": "string" },
+        "versionNumber": { "type": "integer" },
+        "matchedPatternId": { "type": "string" },
+        "evaluationStatus": { "type": "string", "enum": ["CORRECT", "WRONG", "INCOMPLETE"] },
+        "score": { "type": "integer" },
+        "correctWordCount": { "type": "integer" },
+        "wrongWordCount": { "type": "integer" },
+        "incompleteWordCount": { "type": "integer" },
+        "playerTokensSummary": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "sessionId", "questionId", "questionCode", "versionNumber", "matchedPatternId", "evaluationStatus", "score", "correctWordCount", "wrongWordCount", "incompleteWordCount", "playerTokensSummary", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles isolated to owner and Super Admin."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Trusted admin role and granular permission documents."
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Nahwu categories."
+    },
+    "/questions/{questionId}": {
+      "schema": { "$ref": "#/entities/Question" },
+      "description": "Nahwu questions with isolated publishedVersionData and latestVersionData."
+    },
+    "/questions/{questionId}/versions/{versionId}": {
+      "schema": { "$ref": "#/entities/QuestionVersion" },
+      "description": "Immutable version history for a question."
+    },
+    "/questions/{questionId}/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/QuestionReview" },
+      "description": "Review history for a question."
+    },
+    "/admin_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AdminLog" },
+      "description": "Admin activity log."
+    },
+    "/app_config/{configId}": {
+      "schema": { "$ref": "#/entities/DifficultyConfig" },
+      "description": "Global configurable difficulty thresholds."
+    },
+    "/users/{userId}/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/PlayerSession" },
+      "description": "User practice sessions."
+    },
+    "/users/{userId}/sessions/{sessionId}/answers/{answerId}": {
+      "schema": { "$ref": "#/entities/PlayerAnswer" },
+      "description": "Submitted player answers within a session."
+    }
+  }
+}

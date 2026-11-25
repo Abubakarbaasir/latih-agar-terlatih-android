@@ -1,0 +1,6 @@
+{
+  "name": "Latih Agar Terlatih",
+  "description": "Aplikasi pembelajaran interaktif ilmu Nahwu, Tarkib, dan I'rab bahasa Arab: Think, Practice, Understand, Master.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
