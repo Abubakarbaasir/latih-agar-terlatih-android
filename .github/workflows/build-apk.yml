@@ -19,11 +19,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Generate debug.keystore if missing
+      - name: Generate wrapper and debug.keystore
         run: |
+          gradle wrapper --gradle-version 8.7
+          chmod +x gradlew
           if [ ! -f debug.keystore ]; then
             keytool -genkeypair -v \
               -keystore debug.keystore \
